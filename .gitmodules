@@ -1,0 +1,12 @@
+[submodule "libpreopen"]
+	path = third_party/libpreopen
+	url = https://github.com/musec/libpreopen.git
+[submodule "cloudlibc"]
+	path = third_party/cloudlibc
+	url = https://github.com/NuxiNL/cloudlibc.git
+[submodule "cloudabi"]
+	path = third_party/cloudabi
+	url = https://github.com/NuxiNL/cloudabi.git
+[submodule "musl"]
+	path = third_party/musl
+	url = git://git.musl-libc.org/musl
