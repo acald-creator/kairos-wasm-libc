@@ -1,0 +1,1892 @@
+# Copyright (c) 2016 Nuxi (https://nuxi.nl/) and contributors.
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+| # Nuxi CloudABI
+|
+| CloudABI is what you get if you take POSIX, add capability-based
+| security, and remove everything that's incompatible with that. The
+| result is a minimal ABI consisting of only 49 syscalls.
+|
+| CloudABI doesn't have its own kernel, but instead is implemented in existing
+| kernels: FreeBSD has CloudABI support for x86-64 and arm64, and [a patch-set
+| for NetBSD](https://github.com/NuxiNL/netbsd) and [a patch-set for
+| Linux](https://github.com/NuxiNL/linux) are available as well. This means that
+| CloudABI binaries can be executed on different operating systems, without any
+| modification.
+|
+| ## Capability-Based Security
+|
+| Capability-based security means that processes can only perform
+| actions that have no global impact. Processes cannot open files by
+| their absolute path, cannot open network connections, and cannot
+| observe global system state such as the process table.
+|
+| The capabilities of a process are fully determined by its set of open
+| file descriptors (fds). For example, files can only be opened if the
+| process already has a file descriptor to a directory the file is in.
+|
+| Unlike in POSIX, where processes are normally started with file
+| descriptors 0, 1, and 2 reserved for standard input, output, and
+| error, CloudABI does not reserve any file descriptor numbers for
+| specific purposes.
+|
+| In CloudABI, a process depends on its parent process to launch it with
+| the right set of resources, since the process will not be able to open
+| any new resources. For example, a simple static web server would need
+| to be started with a file descriptor to a [TCP
+| listener](https://github.com/NuxiNL/flower), and a file descriptor to
+| the directory for which to serve files. The web server will then be
+| unable to do anything other than reading files in that directory, and
+| process incoming network connections.
+|
+| So, unknown CloudABI binaries can safely be executed without the need
+| for containers, virtual machines, or other sandboxing technologies.
+|
+| Watch [Ed Schouten's Talk at
+| 32C3](https://www.youtube.com/watch?v=3N29vrPoDv8) for more
+| information about what capability-based security for UNIX means.
+|
+| ## Cloudlibc
+|
+| [Cloudlibc](https://github.com/NuxiNL/cloudlibc) is an implementation
+| of the C standard library, without all CloudABI-incompatible
+| functions. For example, Cloudlibc does not have `printf`, but does
+| have `fprintf`. It does not have `open`, but does have `openat`.
+|
+| ## CloudABI-Ports
+|
+| [CloudABI-Ports](https://github.com/NuxiNL/cloudabi-ports) is a
+| collection of ports of commonly used libraries and applications to
+| CloudABI. It contains software such as `zlib`, `libpng`, `boost`,
+| `memcached`, and much more. The software is patched to not depend on
+| any global state, such as files in `/etc` or `/dev`, using `open()`,
+| etc.
+|
+| ## Using CloudABI
+|
+| Instructions for using CloudABI (including kernel modules/patches,
+| toolchain, and ports) are available for several operating systems:
+|
+| - [FreeBSD](https://cloudabi.org/run/freebsd/)
+| - [Linux](https://cloudabi.org/run/linux/)
+| - [macOS](https://cloudabi.org/run/macos/)
+|
+| ## Specification of the ABI
+|
+| The entire ABI is specified in a file called
+| [`cloudabi.txt`](https://github.com/NuxiNL/cloudabi/blob/master/cloudabi.txt),
+| from which all
+| [headers](https://github.com/NuxiNL/cloudabi/tree/master/headers)
+| and documentation (including the one you're reading now) is generated.
+
+enum uint8 advice
+	| File or memory access pattern advisory information.
+	1 dontneed
+		| The application expects that it will not access the
+		| specified data in the near future.
+	2 noreuse
+		| The application expects to access the specified data
+		| once and then not reuse it thereafter.
+	3 normal
+		| The application has no advice to give on its behavior
+		| with respect to the specified data.
+	4 random
+		| The application expects to access the specified data
+		| in a random order.
+	5 sequential
+		| The application expects to access the specified data
+		| sequentially from lower offsets to higher offsets.
+	6 willneed
+		| The application expects to access the specified data
+		| in the near future.
+
+enum uint32 auxtype
+	| Enumeration describing the kind of value stored in [auxv].
+	@cprefix AT_
+	256 argdata
+		| Base address of the binary argument data provided to
+		| [proc_exec].
+	257 argdatalen
+		| Length of the binary argument data provided to
+		| [proc_exec].
+	7 base
+		| Base address at which the executable is placed in
+		| memory.
+	258 canary
+		| Base address of a buffer of random data that may be
+		| used for non-cryptographic purposes, for example as a
+		| canary for stack smashing protection.
+	259 canarylen
+		| Length of a buffer of random data that may be used
+		| for non-cryptographic purposes, for example as a
+		| canary for stack smashing protection.
+	260 ncpus
+		| Number of CPUs that the system this process is running
+		| on has.
+	0   null
+		| Terminator of the auxiliary vector.
+	6   pagesz
+		| Smallest memory object size for which individual
+		| memory protection controls can be configured.
+	3   phdr
+		| Address of the first ELF program header of the
+		| executable.
+	4   phnum
+		| Number of ELF program headers of the executable.
+	263 pid
+		| Identifier of the process.
+		|
+		| This environment does not provide any simple numerical
+		| process identifiers, for the reason that these are not
+		| useful in distributed contexts. Instead, processes are
+		| identified by a UUID.
+		|
+		| This record should point to sixteen bytes of binary
+		| data, containing a version 4 UUID (fully random).
+	262 sysinfo_ehdr
+		| Address of the ELF header of the vDSO.
+		|
+		| The vDSO is a shared library that is mapped in the
+		| address space of the process. It provides entry points
+		| for every system call supported by the environment,
+		| all having a corresponding symbol that is prefixed
+		| with `cloudabi_sys_`. System calls should be invoked
+		| through these entry points.
+		|
+		| The first advantage of letting processes call into a
+		| vDSO to perform system calls instead of raising
+		| hardware traps is that it allows for easy emulation of
+		| executables on top of existing operating systems. The
+		| second advantage is that in cases where an operating
+		| system provides native support for CloudABI executables,
+		| it may still implement partial userspace
+		| implementations of these system calls to improve
+		| performance (e.g., [clock_time_get]). It also provides
+		| a more dynamic way of adding, removing or replacing
+		| system calls.
+	261 tid
+		| Thread ID of the initial thread of the process.
+
+enum uint32 clockid
+	| Identifiers for clocks.
+	@cprefix CLOCK_
+	1 monotonic
+		| The system-wide monotonic clock, which is defined as a
+		| clock measuring real time, whose value cannot be
+		| adjusted and which cannot have negative clock jumps.
+		|
+		| The epoch of this clock is undefined. The absolute
+		| time value of this clock therefore has no meaning.
+	2 process_cputime_id
+		| The CPU-time clock associated with the current
+		| process.
+	3 realtime
+		| The system-wide clock measuring real time. Time value
+		| zero corresponds with 1970-01-01T00:00:00Z.
+	4 thread_cputime_id
+		| The CPU-time clock associated with the current thread.
+
+opaque uint32 condvar
+	| A userspace condition variable.
+	0 has_no_waiters
+		| The condition variable is in its initial state. There
+		| are no threads waiting to be woken up. If the
+		| condition variable has any other value, the kernel
+		| must be called to wake up any sleeping threads.
+
+opaque uint64 device
+	| Identifier for a device containing a file system. Can be used
+	| in combination with [inode] to uniquely identify a file on the
+	| local system.
+
+opaque uint64 dircookie
+	| A reference to the offset of a directory entry.
+	0 start
+		| Permanent reference to the first directory entry
+		| within a directory.
+
+enum uint16 errno
+	| Error codes returned by system calls.
+	|
+	| Not all of these error codes are returned by the system calls
+	| provided by this environment, but are either used in userspace
+	| exclusively or merely provided for alignment with POSIX.
+	@cprefix E
+	0  success
+		| No error occurred. System call completed successfully.
+	1  2big
+		| Argument list too long.
+	2  acces
+		| Permission denied.
+	3  addrinuse
+		| Address in use.
+	4  addrnotavail
+		| Address not available.
+	5  afnosupport
+		| Address family not supported.
+	6  again
+		| Resource unavailable, or operation would block.
+	7  already
+		| Connection already in progress.
+	8  badf
+		| Bad file descriptor.
+	9  badmsg
+		| Bad message.
+	10 busy
+		| Device or resource busy.
+	11 canceled
+		| Operation canceled.
+	12 child
+		| No child processes.
+	13 connaborted
+		| Connection aborted.
+	14 connrefused
+		| Connection refused.
+	15 connreset
+		| Connection reset.
+	16 deadlk
+		| Resource deadlock would occur.
+	17 destaddrreq
+		| Destination address required.
+	18 dom
+		| Mathematics argument out of domain of function.
+	19 dquot
+		| Reserved.
+	20 exist
+		| File exists.
+	21 fault
+		| Bad address.
+	22 fbig
+		| File too large.
+	23 hostunreach
+		| Host is unreachable.
+	24 idrm
+		| Identifier removed.
+	25 ilseq
+		| Illegal byte sequence.
+	26 inprogress
+		| Operation in progress.
+	27 intr
+		| Interrupted function.
+	28 inval
+		| Invalid argument.
+	29 io
+		| I/O error.
+	30 isconn
+		| Socket is connected.
+	31 isdir
+		| Is a directory.
+	32 loop
+		| Too many levels of symbolic links.
+	33 mfile
+		| File descriptor value too large.
+	34 mlink
+		| Too many links.
+	35 msgsize
+		| Message too large.
+	36 multihop
+		| Reserved.
+	37 nametoolong
+		| Filename too long.
+	38 netdown
+		| Network is down.
+	39 netreset
+		| Connection aborted by network.
+	40 netunreach
+		| Network unreachable.
+	41 nfile
+		| Too many files open in system.
+	42 nobufs
+		| No buffer space available.
+	43 nodev
+		| No such device.
+	44 noent
+		| No such file or directory.
+	45 noexec
+		| Executable file format error.
+	46 nolck
+		| No locks available.
+	47 nolink
+		| Reserved.
+	48 nomem
+		| Not enough space.
+	49 nomsg
+		| No message of the desired type.
+	50 noprotoopt
+		| Protocol not available.
+	51 nospc
+		| No space left on device.
+	52 nosys
+		| Function not supported.
+	53 notconn
+		| The socket is not connected.
+	54 notdir
+		| Not a directory or a symbolic link to a directory.
+	55 notempty
+		| Directory not empty.
+	56 notrecoverable
+		| State not recoverable.
+	57 notsock
+		| Not a socket.
+	58 notsup
+		| Not supported, or operation not supported on socket.
+	59 notty
+		| Inappropriate I/O control operation.
+	60 nxio
+		| No such device or address.
+	61 overflow
+		| Value too large to be stored in data type.
+	62 ownerdead
+		| Previous owner died.
+	63 perm
+		| Operation not permitted.
+	64 pipe
+		| Broken pipe.
+	65 proto
+		| Protocol error.
+	66 protonosupport
+		| Protocol not supported.
+	67 prototype
+		| Protocol wrong type for socket.
+	68 range
+		| Result too large.
+	69 rofs
+		| Read-only file system.
+	70 spipe
+		| Invalid seek.
+	71 srch
+		| No such process.
+	72 stale
+		| Reserved.
+	73 timedout
+		| Connection timed out.
+	74 txtbsy
+		| Text file busy.
+	75 xdev
+		| Cross-device link.
+	76 notcapable
+		| Extension: Capabilities insufficient.
+
+flags uint16 eventrwflags
+	| The state of the file descriptor subscribed to with
+	| [eventtype.fd_read] or [eventtype.fd_write].
+	@cprefix EVENT_FD_READWRITE_
+	0x01 hangup
+		| The peer of this socket has closed or disconnected.
+
+enum uint8 eventtype
+	| Type of a subscription to an event or its occurrence.
+	1 clock
+		| The time value of clock [subscription.clock.clock_id]
+		| has reached timestamp [subscription.clock.timeout].
+	2 condvar
+		| Condition variable [subscription.condvar.condvar] has
+		| been woken up and [subscription.condvar.lock] has been
+		| acquired for writing.
+	3 fd_read
+		| File descriptor [subscription.fd_readwrite.fd] has
+		| data available for reading. This event always triggers
+		| for regular files.
+	4 fd_write
+		| File descriptor [subscription.fd_readwrite.fd] has
+		| capacity available for writing. This event always
+		| triggers for regular files.
+	5 lock_rdlock
+		| Lock [subscription.lock.lock] has been acquired for
+		| reading.
+	6 lock_wrlock
+		| Lock [subscription.lock.lock] has been acquired for
+		| writing.
+	7 proc_terminate
+		| The process associated with process descriptor
+		| [subscription.proc_terminate.fd] has terminated.
+
+alias uint32 exitcode
+	| Exit code generated by a process when exiting.
+
+opaque uint32 fd
+	| A file descriptor number.
+	|
+	| Unlike on POSIX-compliant systems, none of the file descriptor
+	| numbers are reserved for a purpose (e.g., stdin, stdout,
+	| stderr). Operating systems are not required to allocate new
+	| file descriptors in ascending order.
+	@cprefix
+	0xffffffff process_child
+		| Returned to the child process by [proc_fork].
+	0xffffffff map_anon_fd
+		| Passed to [mem_map] when creating a mapping to
+		| anonymous memory.
+
+flags uint16 fdflags
+	| File descriptor flags.
+	@cprefix FDFLAG_
+	0x01 append
+		| Append mode: Data written to the file is always
+		| appended to the file's end.
+	0x02 dsync
+		| Write according to synchronized I/O data integrity
+		| completion. Only the data stored in the file is
+		| synchronized.
+	0x04 nonblock
+		| Non-blocking mode.
+	0x08 rsync
+		| Synchronized read I/O operations.
+	0x10 sync
+		| Write according to synchronized I/O file integrity
+		| completion. In addition to synchronizing the data
+		| stored in the file, the system may also synchronously
+		| update the file's metadata.
+
+flags uint16 fdsflags
+	| Which file descriptor attributes to adjust.
+	@cprefix FDSTAT_
+	0x01 flags
+		| Adjust the file descriptor flags stored in
+		| [fdstat.fs_flags].
+	0x02 rights
+		| Restrict the rights of the file descriptor to the
+		| rights stored in [fdstat.fs_rights_base] and
+		| [fdstat.fs_rights_inheriting].
+
+alias int64 filedelta
+	| Relative offset within a file.
+
+alias uint64 filesize
+	| Non-negative file size or length of a region within a file.
+
+flags uint16 fsflags
+	| Which file attributes to adjust.
+	@cprefix FILESTAT_
+	0x01 atim
+		| Adjust the last data access timestamp to the value
+		| stored in [filestat.st_atim].
+	0x02 atim_now
+		| Adjust the last data access timestamp to the time
+		| of clock [clockid.realtime].
+	0x04 mtim
+		| Adjust the last data modification timestamp to the
+		| value stored in [filestat.st_mtim].
+	0x08 mtim_now
+		| Adjust the last data modification timestamp to the
+		| time of clock [clockid.realtime].
+	0x10 size
+		| Truncate or extend the file to the size stored in
+		| [filestat.st_size].
+
+enum uint8 filetype
+	| The type of a file descriptor or file.
+	0x00 unknown
+		| The type of the file descriptor or file is unknown or
+		| is different from any of the other types specified.
+	0x10 block_device
+		| The file descriptor or file refers to a block device
+		| inode.
+	0x11 character_device
+		| The file descriptor or file refers to a character
+		| device inode.
+	0x20 directory
+		| The file descriptor or file refers to a directory
+		| inode.
+	0x50 process
+		| The file descriptor refers to a process handle.
+	0x60 regular_file
+		| The file descriptor or file refers to a regular file
+		| inode.
+	0x70 shared_memory
+		| The file descriptor refers to a shared memory object.
+	0x80 socket_dgram
+		| The file descriptor or file refers to a datagram
+		| socket.
+	0x82 socket_stream
+		| The file descriptor or file refers to a byte-stream
+		| socket.
+	0x90 symbolic_link
+		| The file refers to a symbolic link inode.
+
+opaque uint64 inode
+	| File serial number that is unique within its file system.
+
+alias uint32 linkcount
+	| Number of hard links to an inode.
+
+opaque uint32 lock
+	| A userspace read-recursive readers-writer lock, similar to a
+	| Linux futex or a FreeBSD umtx.
+	0          unlocked
+		| Value indicating that the lock is in its initial
+		| unlocked state.
+	0x40000000 wrlocked
+		| Bitmask indicating that the lock is write-locked. If
+		| set, the lower 30 bits of the lock contain the
+		| identifier of the thread that owns the write lock.
+		| Otherwise, the lower 30 bits of the lock contain the
+		| number of acquired read locks.
+	0x80000000 kernel_managed
+		| Bitmask indicating that the lock is either read locked
+		| or write locked, and that one or more threads have
+		| their execution suspended, waiting to acquire the
+		| lock. The last owner of the lock must call the
+		| kernel to unlock.
+		|
+		| When the lock is acquired for reading and this bit is
+		| set, it means that one or more threads are attempting
+		| to acquire this lock for writing. In that case, other
+		| threads should only acquire additional read locks if
+		| suspending execution would cause a deadlock. It is
+		| preferred to suspend execution, as this prevents
+		| starvation of writers.
+	0x80000000 bogus
+		| Value indicating that the lock is in an incorrect
+		| state. A lock cannot be in its initial unlocked state,
+		| while also managed by the kernel.
+
+flags uint32 lookupflags
+	| Flags determining the method of how paths are resolved.
+	@cprefix LOOKUP_
+	1 symlink_follow
+		| As long as the resolved path corresponds to a symbolic
+		| link, it is expanded.
+
+flags uint8 mflags
+	| Memory mapping flags.
+	@cprefix MAP_
+	0x01 anon
+		| Instead of mapping the contents of the file provided,
+		| create a mapping to anonymous memory. The file
+		| descriptor argument must be set to [fd.map_anon_fd],
+		| and the offset must be set to zero.
+	0x02 fixed
+		| Require that the mapping is performed at the base
+		| address provided.
+	0x04 private
+		| Changes are private.
+	0x08 shared
+		| Changes are shared.
+
+enum uint8 scope
+	| Indicates whether an object is stored in private or shared
+	| memory.
+	0x04 private
+		| The object is stored in private memory.
+	0x08 shared
+		| The object is stored in shared memory.
+
+flags uint8 mprot
+	| Memory page protection options.
+	|
+	| This implementation enforces the `W^X` property: Pages cannot be
+	| mapped for execution while also mapped for writing.
+	@cprefix PROT_
+	0x01 exec
+		| Page can be executed.
+	0x02 write
+		| Page can be written.
+	0x04 read
+		| Page can be read.
+
+flags uint8 msflags
+	| Methods of synchronizing memory with physical storage.
+	@cprefix MS_
+	0x01 async
+		| Perform asynchronous writes.
+	0x02 invalidate
+		| Invalidate cached data.
+	0x04 sync
+		| Perform synchronous writes.
+
+alias uint32 nthreads
+	| Specifies the number of threads sleeping on a condition
+	| variable that should be woken up.
+
+flags uint16 oflags
+	| Open flags used by [file_open].
+	@cprefix O_
+	0x01 creat
+		| Create file if it does not exist.
+	0x02 directory
+		| Fail if not a directory.
+	0x04 excl
+		| Fail if file already exists.
+	0x08 trunc
+		| Truncate file to size 0.
+
+flags uint64 rights
+	| File descriptor rights, determining which actions may be
+	| performed.
+	@cprefix RIGHT_
+	0x0000000000000001 fd_datasync
+		| The right to invoke [fd_datasync].
+		|
+		| If [rights.file_open] is set, includes the right to
+		| invoke [file_open] with [fdflags.dsync].
+	0x0000000000000002 fd_read
+		| The right to invoke [fd_read] and [sock_recv].
+		|
+		| If [rights.mem_map] is set, includes the right to
+		| invoke [mem_map] with memory protection option
+		| [mprot.read].
+		|
+		| If [rights.fd_seek] is set, includes the right to invoke
+		| [fd_pread].
+	0x0000000000000004 fd_seek
+		| The right to invoke [fd_seek]. This flag implies
+		| [rights.fd_tell].
+	0x0000000000000008 fd_stat_put_flags
+		| The right to invoke [fd_stat_put] with
+		| [fdsflags.flags].
+	0x0000000000000010 fd_sync
+		| The right to invoke [fd_sync].
+		|
+		| If [rights.file_open] is set, includes the right to
+		| invoke [file_open] with [fdflags.rsync] and
+		| [fdflags.dsync].
+	0x0000000000000020 fd_tell
+		| The right to invoke [fd_seek] in such a way that the
+		| file offset remains unaltered (i.e., [whence.cur] with
+		| offset zero).
+	0x0000000000000040 fd_write
+		| The right to invoke [fd_write] and [sock_send].
+		|
+		| If [rights.mem_map] is set, includes the right to
+		| invoke [mem_map] with memory protection option
+		| [mprot.write].
+		|
+		| If [rights.fd_seek] is set, includes the right to
+		| invoke [fd_pwrite].
+	0x0000000000000080 file_advise
+		| The right to invoke [file_advise].
+	0x0000000000000100 file_allocate
+		| The right to invoke [file_allocate].
+	0x0000000000000200 file_create_directory
+		| The right to invoke [file_create] with
+		| [filetype.directory].
+	0x0000000000000400 file_create_file
+		| If [rights.file_open] is set, the right to invoke
+		| [file_open] with [oflags.creat].
+	0x0000000000001000 file_link_source
+		| The right to invoke [file_link] with the file
+		| descriptor as the source directory.
+	0x0000000000002000 file_link_target
+		| The right to invoke [file_link] with the file
+		| descriptor as the target directory.
+	0x0000000000004000 file_open
+		| The right to invoke [file_open].
+		# Does not include file_open with oflags.creat and
+		# oflags.trunc?
+	0x0000000000008000 file_readdir
+		| The right to invoke [file_readdir].
+	0x0000000000010000 file_readlink
+		| The right to invoke [file_readlink].
+	0x0000000000020000 file_rename_source
+		| The right to invoke [file_rename] with the file
+		| descriptor as the source directory.
+	0x0000000000040000 file_rename_target
+		| The right to invoke [file_rename] with the file
+		| descriptor as the target directory.
+	0x0000000000080000 file_stat_fget
+		| The right to invoke [file_stat_fget].
+	0x0000000000100000 file_stat_fput_size
+		| The right to invoke [file_stat_fput] with
+		| [fsflags.size].
+		|
+		| If [rights.file_open] is set, includes the right to
+		| invoke [file_open] with [oflags.trunc].
+	0x0000000000200000 file_stat_fput_times
+		| The right to invoke [file_stat_fput] with
+		| [fsflags.atim], [fsflags.atim_now], [fsflags.mtim],
+		| and [fsflags.mtim_now].
+	0x0000000000400000 file_stat_get
+		| The right to invoke [file_stat_get].
+	0x0000000000800000 file_stat_put_times
+		| The right to invoke [file_stat_put] with
+		| [fsflags.atim], [fsflags.atim_now], [fsflags.mtim],
+		| and [fsflags.mtim_now].
+	0x0000000001000000 file_symlink
+		| The right to invoke [file_symlink].
+	0x0000000002000000 file_unlink
+		| The right to invoke [file_unlink].
+	0x0000000004000000 mem_map
+		| The right to invoke [mem_map] with [mprot] set to
+		| zero.
+	0x0000000008000000 mem_map_exec
+		| If [rights.mem_map] is set, the right to invoke
+		| [mem_map] with [mprot.exec].
+	0x0000000010000000 poll_fd_readwrite
+		| If [rights.fd_read] is set, includes the right to
+		| invoke [poll] to subscribe to [eventtype.fd_read].
+		|
+		| If [rights.fd_write] is set, includes the right to
+		| invoke [poll] to subscribe to [eventtype.fd_write].
+	0x0000000040000000 poll_proc_terminate
+		| The right to invoke [poll] to subscribe to
+		| [eventtype.proc_terminate].
+	0x0000000100000000 proc_exec
+		| The right to invoke [proc_exec].
+	0x0000008000000000 sock_shutdown
+		| The right to invoke [sock_shutdown].
+
+flags uint8 sdflags
+	| Which channels on a socket need to be shut down.
+	@cprefix SHUT_
+	0x01 rd
+		| Disables further receive operations.
+	0x02 wr
+		| Disables further send operations.
+
+flags uint16 siflags
+	| Flags provided to [sock_send]. As there are currently no flags
+	| defined, it must be set to zero.
+
+enum uint8 signal
+	| Signal condition.
+	@cprefix SIG
+	1  abrt
+		| Process abort signal.
+		|
+		| Action: Terminates the process.
+	2  alrm
+		| Alarm clock.
+		|
+		| Action: Terminates the process.
+	3  bus
+		| Access to an undefined portion of a memory object.
+		|
+		| Action: Terminates the process.
+	4  chld
+		| Child process terminated, stopped, or continued.
+		|
+		| Action: Ignored.
+	5  cont
+		| Continue executing, if stopped.
+		|
+		| Action: Continues executing, if stopped.
+	6  fpe
+		| Erroneous arithmetic operation.
+		|
+		| Action: Terminates the process.
+	7  hup
+		| Hangup.
+		|
+		| Action: Terminates the process.
+	8  ill
+		| Illegal instruction.
+		|
+		| Action: Terminates the process.
+	9  int
+		| Terminate interrupt signal.
+		|
+		| Action: Terminates the process.
+	10 kill
+		| Kill.
+		|
+		| Action: Terminates the process.
+	11 pipe
+		| Write on a pipe with no one to read it.
+		|
+		| Action: Ignored.
+	12 quit
+		| Terminal quit signal.
+		|
+		| Action: Terminates the process.
+	13 segv
+		| Invalid memory reference.
+		|
+		| Action: Terminates the process.
+	14 stop
+		| Stop executing.
+		|
+		| Action: Stops executing.
+	15 sys
+		| Bad system call.
+		|
+		| Action: Terminates the process.
+	16 term
+		| Termination signal.
+		|
+		| Action: Terminates the process.
+	17 trap
+		| Trace/breakpoint trap.
+		|
+		| Action: Terminates the process.
+	18 tstp
+		| Terminal stop signal.
+		|
+		| Action: Stops executing.
+	19 ttin
+		| Background process attempting read.
+		|
+		| Action: Stops executing.
+	20 ttou
+		| Background process attempting write.
+		|
+		| Action: Stops executing.
+	21 urg
+		| High bandwidth data is available at a socket.
+		|
+		| Action: Ignored.
+	22 usr1
+		| User-defined signal 1.
+		|
+		| Action: Terminates the process.
+	23 usr2
+		| User-defined signal 2.
+		|
+		| Action: Terminates the process.
+	24 vtalrm
+		| Virtual timer expired.
+		|
+		| Action: Terminates the process.
+	25 xcpu
+		| CPU time limit exceeded.
+		|
+		| Action: Terminates the process.
+	26 xfsz
+		| File size limit exceeded.
+		|
+		| Action: Terminates the process.
+
+flags uint16 subclockflags
+	| Flags determining how the timestamp provided in
+	| [subscription.clock.timeout] should be interpreted.
+	@cprefix SUBSCRIPTION_CLOCK_
+	0x01 abstime
+		| If set, treat the timestamp provided in
+		| [subscription.clock.timeout] as an absolute timestamp
+		| of clock [subscription.clock.clock_id].
+		|
+		| If clear, treat the timestamp provided in
+		| [subscription.clock.timeout] relative to the current
+		| time value of clock [subscription.clock.clock_id].
+
+flags uint16 subrwflags
+	| Flags influencing the method of polling for read or writing on
+	| a file descriptor.
+	@cprefix SUBSCRIPTION_FD_READWRITE_
+	0x01 poll
+		| Deprecated. Must be set by callers and ignored by
+		| implementations.
+
+flags uint16 riflags
+	| Flags provided to [sock_recv].
+	@cprefix SOCK_RECV_
+	0x04 peek
+		| Returns the message without removing it from the
+		| socket's receive queue.
+	0x10 waitall
+		| On byte-stream sockets, block until the full amount
+		| of data can be returned.
+
+flags uint16 roflags
+	| Flags returned by [sock_recv].
+	@cprefix SOCK_RECV_
+	0x01 fds_truncated
+		| Returned by [sock_recv]: List of file descriptors
+		| has been truncated.
+	0x08 data_truncated
+		| Returned by [sock_recv]: Message data has been
+		| truncated.
+
+opaque uint32 tid
+	| Unique system-local identifier of a thread. This identifier is
+	| only valid during the lifetime of the thread.
+	|
+	| Threads must be aware of their thread identifier, as it is
+	| written it into locks when acquiring them for writing. It is
+	| not advised to use these identifiers for any other purpose.
+	|
+	| As the thread identifier is also stored in [lock] when
+	| [lock.wrlocked] is set, the top two bits of the thread
+	| must always be set to zero.
+
+alias uint64 timestamp
+	| Timestamp in nanoseconds.
+
+flags uint8 ulflags
+	| Specifies whether files are unlinked or directories are
+	| removed.
+	@cprefix UNLINK_
+	0x01 removedir
+		| If set, removes a directory. Otherwise, unlinks any
+		| non-directory file.
+
+alias uint64 userdata
+	| User-provided value that can be attached to objects that is
+	| retained when extracted from the kernel.
+
+enum uint8 whence
+	| Relative to which position the offset of the file descriptor
+	| should be set.
+	1 cur
+		| Seek relative to current position.
+	2 end
+		| Seek relative to end-of-file.
+	3 set
+		| Seek relative to start-of-file.
+
+function threadentry
+	| Entry point for additionally created threads.
+	in
+		tid      tid
+			| Thread ID of the current thread.
+		ptr void aux
+			| Copy of the value stored in
+			| [threadattr.argument].
+
+struct auxv
+	| Auxiliary vector entry.
+	|
+	| The auxiliary vector is a list of key-value pairs that is
+	| provided to the process on startup. Unlike structures, it is
+	| extensible, as it is possible to add new records later on.
+	| The auxiliary vector is always terminated by an entry having
+	| type [auxtype.null].
+	|
+	| The auxiliary vector is part of the x86-64 ABI, but is used by
+	| this environment on all architectures.
+	auxtype a_type
+		| The type of the auxiliary vector entry.
+	variant a_type
+		argdatalen canarylen ncpus pagesz phnum tid
+			size a_val
+				| A numerical value.
+		argdata base canary phdr pid sysinfo_ehdr
+			ptr void a_ptr
+				| A pointer value.
+
+function processentry
+	| Entry point for a process (`_start`).
+	in
+		cptr auxv auxv
+			| The auxiliary vector. See [auxv].
+
+struct ciovec
+	| A region of memory for scatter/gather writes.
+	crange void buf
+		| The address and length of the buffer to be written.
+
+struct dirent
+	| A directory entry.
+	dircookie d_next
+		| The offset of the next directory entry stored in this
+		| directory.
+	inode     d_ino
+		| The serial number of the file referred to by this
+		| directory entry.
+	uint32    d_namlen
+		| The length of the name of the directory entry.
+	filetype  d_type
+		| The type of the file referred to by this directory
+		| entry.
+
+struct event
+	| An event that occurred.
+	userdata  userdata
+		| User-provided value that got attached to
+		| [subscription.userdata].
+	errno     error
+		| If non-zero, an error that occurred while processing
+		| the subscription request.
+	eventtype type
+		| The type of the event that occurred.
+	variant type
+		fd_read fd_write
+			struct fd_readwrite
+				filesize     nbytes
+					| The number of bytes available
+					| for reading or writing.
+				array 4 char unused
+					| Obsolete.
+				eventrwflags flags
+					| The state of the file
+					| descriptor.
+		proc_terminate
+			struct proc_terminate
+				array 4 char unused
+					| Obsolete.
+				signal       signal
+					| If zero, the process has
+					| exited.
+					| Otherwise, the signal
+					| condition causing it to
+					| terminated.
+				exitcode     exitcode
+					| If exited, the exit code of
+					| the process.
+
+struct fdstat
+	| File descriptor attributes.
+	filetype fs_filetype
+		| File type.
+	fdflags  fs_flags
+		| File descriptor flags.
+	rights   fs_rights_base
+		| Rights that apply to this file descriptor.
+	rights   fs_rights_inheriting
+		| Maximum set of rights that can be installed on new
+		| file descriptors that are created through this file
+		| descriptor, e.g., through [file_open].
+
+struct filestat
+	| File attributes.
+	device    st_dev
+		| Device ID of device containing the file.
+	inode     st_ino
+		| File serial number.
+	filetype  st_filetype
+		| File type.
+	linkcount st_nlink
+		| Number of hard links to the file.
+	filesize  st_size
+		| For regular files, the file size in bytes. For
+		| symbolic links, the length in bytes of the pathname
+		| contained in the symbolic link.
+	timestamp st_atim
+		| Last data access timestamp.
+	timestamp st_mtim
+		| Last data modification timestamp.
+	timestamp st_ctim
+		| Last file status change timestamp.
+
+struct iovec
+	| A region of memory for scatter/gather reads.
+	range void buf
+		| The address and length of the buffer to be filled.
+
+struct lookup
+	| Path lookup properties.
+	fd          fd
+		| The working directory at which the resolution of the
+		| path starts.
+	lookupflags flags
+		| Flags determining the method of how the path is
+		| resolved.
+
+struct recv_in
+	| Arguments of [sock_recv].
+	crange iovec ri_data
+		| List of scatter/gather vectors where message data
+		| should be stored.
+	range fd     ri_fds
+		| Buffer where numbers of incoming file descriptors
+		| should be stored.
+	riflags      ri_flags
+		| Message flags.
+
+struct send_in
+	| Arguments of [sock_send].
+	crange ciovec si_data
+		| List of scatter/gather vectors where message data
+		| should be retrieved.
+	crange fd     si_fds
+		| File descriptors that need to be attached to the
+		| message.
+	siflags       si_flags
+		| Message flags.
+
+struct send_out
+	| Results of [sock_send].
+	size so_datalen
+		| Number of bytes transmitted.
+
+struct recv_out
+	| Results of [sock_recv].
+	size     ro_datalen
+		| Number of bytes stored in [recv_in.ri_data].
+	size     ro_fdslen
+		| Number of file descriptors stored in [recv_in.ri_fds].
+	array 40 char ro_unused
+		| Fields that were used by previous implementations.
+	roflags  ro_flags
+		| Message flags.
+
+struct subscription
+	| Subscription to an event.
+	userdata  userdata
+		| User-provided value that is attached to the
+		| subscription in the kernel and returned through
+		| [event.userdata].
+	uint16    unused
+		| Used by previous implementations. Ignored.
+	eventtype type
+		| The type of the event to which to subscribe.
+		|
+		| Currently, [eventtype.condvar],
+		| [eventtype.lock_rdlock], and [eventtype.lock_wrlock]
+		| must be provided as the first subscription and may
+		| only be followed by up to one other subscription,
+		| having type [eventtype.clock].
+	variant type
+		clock
+			struct clock
+				userdata identifier
+					| The user-defined unique
+					| identifier of the clock.
+				clockid  clock_id
+					| The clock against which the
+					| timestamp should be compared.
+		# What happens when waiting for thread_cputime_id?
+		# UB? Wait forever? Actually uses monotonic instead?
+		# And how about realtime? Can I wait for a specific
+		# date/time?
+				timestamp timeout
+					| The absolute or relative
+					| timestamp.
+				timestamp precision
+					| The amount of time that the
+					| kernel may wait additionally
+					| to coalesce with other events.
+				subclockflags flags
+					| Flags specifying whether the
+					| timeout is absolute or
+					| relative.
+		condvar
+			struct condvar
+				ptr atomic condvar condvar
+					| The condition variable on
+					| which to wait to be woken up.
+				ptr atomic lock    lock
+					| The lock that will be
+					| released while waiting.
+					|
+					| The lock will be reacquired
+					| for writing when the condition
+					| variable triggers.
+				scope              condvar_scope
+					| Whether the condition variable
+					| is stored in private or shared
+					| memory.
+				scope              lock_scope
+					| Whether the lock is stored in
+					| private or shared memory.
+		fd_read fd_write
+			struct fd_readwrite
+				fd         fd
+					| The file descriptor on which
+					| to wait for it to become ready
+					| for reading or writing.
+				subrwflags flags
+					| Under which conditions to
+					| trigger.
+		lock_rdlock lock_wrlock
+			struct lock
+				ptr atomic lock lock
+					| The lock that will be acquired
+					| for reading or writing.
+				scope           lock_scope
+					| Whether the lock is stored in
+					| private or shared memory.
+		proc_terminate
+			struct proc_terminate
+				fd       fd
+					| The process descriptor on
+					| which to wait for process
+					| termination.
+
+struct tcb
+	| The Thread Control Block (TCB).
+	|
+	| After a thread begins execution (at program startup or when
+	| created through [thread_create]), the CPU's registers
+	| controlling Thread-Local Storage (TLS) will already be
+	| initialized. They will point to an area only containing the
+	| TCB.
+	|
+	| If the thread needs space for storing thread-specific
+	| variables, the thread may allocate a larger area and adjust
+	| the CPU's registers to point to that area instead. However, it
+	| does need to make sure that the TCB is copied over to the new
+	| TLS area.
+	|
+	| The purpose of the TCB is that it allows light-weight
+	| emulators to store information related to individual threads.
+	| For example, it may be used to store a copy of the CPU
+	| registers prior emulation, so that TLS for the host system
+	| can be restored if needed.
+	ptr void parent
+		| Pointer that may be freely assigned by the system. Its
+		| value cannot be interpreted by the application.
+
+struct threadattr
+	| Attributes for thread creation.
+	ptr threadentry entry_point
+		| Initial program counter value.
+	range void      stack
+		| Region allocated to serve as stack space.
+	ptr void        argument
+		| Argument to be forwarded to the entry point function.
+
+syscall clock_res_get
+	| Obtains the resolution of a clock.
+	in
+		clockid   clock_id
+			| The clock for which the resolution needs to be
+			| returned.
+	out
+		timestamp resolution
+			| The resolution of the clock.
+
+syscall clock_time_get
+	| Obtains the time value of a clock.
+	in
+		clockid   clock_id
+			| The clock for which the time needs to be
+			| returned.
+		timestamp precision
+			| The maximum lag (exclusive) that the returned
+			| time value may have, compared to its actual
+			| value.
+	out
+		timestamp time
+			| The time value of the clock.
+
+syscall condvar_signal
+	| Wakes up threads waiting on a userspace condition variable.
+	|
+	| If an invocation of this system call causes all waiting
+	| threads to be woken up, the value of the condition variable
+	| is set to [condvar.has_no_waiters]. As long as the condition
+	| variable is set to this value, it is not needed to invoke this
+	| system call.
+	in
+		ptr atomic condvar condvar
+			| The userspace condition variable that has
+			| waiting threads.
+		scope              scope
+			| Whether the condition variable is stored in
+			| private or shared memory.
+		nthreads           nwaiters
+			| The number of threads that need to be woken
+			| up. If it exceeds the number of waiting
+			| threads, all threads are woken up.
+
+syscall fd_close
+	| Closes a file descriptor.
+	in
+		fd fd
+			| The file descriptor that needs to be closed.
+
+syscall fd_create1
+	| Creates a file descriptor.
+	in
+		filetype type
+			shared_memory
+				| Creates an anonymous shared memory
+				| object.
+	out
+		fd       fd
+			| The file descriptor that has been created.
+
+syscall fd_create2
+	| Creates a pair of file descriptors.
+	in
+		filetype type
+			socket_dgram
+				| Creates a UNIX datagram socket pair.
+			socket_stream
+				| Creates a UNIX byte-stream socket
+				| pair.
+	out
+		fd       fd1
+			| The first file descriptor of the pair.
+		fd       fd2
+			| The second file descriptor of the pair.
+
+syscall fd_datasync
+	| Synchronizes the data of a file to disk.
+	in
+		fd fd
+			| The file descriptor of the file whose data
+			| needs to be synchronized to disk.
+
+syscall fd_dup
+	| Duplicates a file descriptor.
+	in
+		fd from
+			| The file descriptor that needs to be
+			| duplicated.
+	out
+		fd fd
+			| The new file descriptor.
+
+syscall fd_pread
+	| Reads from a file descriptor, without using and updating the
+	| file descriptor's offset.
+	in
+		fd           fd
+			| The file descriptor from which data should be
+			| read.
+		crange iovec iovs
+			| List of scatter/gather vectors where data
+			| should be stored.
+		filesize     offset
+			| The offset within the file at which reading
+			| should start.
+	out
+		size         nread
+			| The number of bytes read.
+
+syscall fd_pwrite
+	| Writes to a file descriptor, without using and updating the
+	| file descriptor's offset.
+	in
+		fd            fd
+			| The file descriptor to which data should be
+			| written.
+		crange ciovec iovs
+			| List of scatter/gather vectors where data
+			| should be retrieved.
+		filesize      offset
+			| The offset within the file at which writing
+			| should start.
+	out
+		size          nwritten
+			| The number of bytes written.
+
+syscall fd_read
+	| Reads from a file descriptor.
+	in
+		fd           fd
+			| The file descriptor from which data should be
+			| read.
+		crange iovec iovs
+			| List of scatter/gather vectors where data
+			| should be stored.
+	out
+		size         nread
+			| The number of bytes read.
+
+syscall fd_replace
+	| Atomically replaces a file descriptor by a copy of another
+	| file descriptor.
+	|
+	| Due to the strong focus on thread safety, this environment
+	| does not provide a mechanism to duplicate a file descriptor to
+	| an arbitrary number, like dup2(). This would be prone to race
+	| conditions, as an actual file descriptor with the same number
+	| could be allocated by a different thread at the same time.
+	|
+	| This system call provides a way to atomically replace file
+	| descriptors, which would disappear if dup2() were to be
+	| removed entirely.
+	in
+		fd from
+			| The file descriptor that needs to be copied.
+		fd to
+			| The file descriptor that needs to be
+			| overwritten.
+
+syscall fd_seek
+	| Moves the offset of the file descriptor.
+	in
+		fd        fd
+			| The file descriptor whose offset has to be
+			| moved.
+		filedelta offset
+			| The number of bytes to move.
+		whence    whence
+			| Relative to which position the move should
+			| take place.
+	out
+		filesize newoffset
+			| The new offset of the file descriptor,
+			| relative to the start of the file.
+
+syscall fd_stat_get
+	| Gets attributes of a file descriptor.
+	in
+		fd         fd
+			| The file descriptor whose attributes have to
+			| be obtained.
+		ptr fdstat buf
+			| The buffer where the file descriptor's
+			| attributes are stored.
+
+syscall fd_stat_put
+	| Adjusts attributes of a file descriptor.
+	in
+		fd          fd
+			| The file descriptor whose attributes have to
+			| be adjusted.
+		cptr fdstat buf
+			| The desired values of the file descriptor
+			| attributes that are adjusted.
+		fdsflags    flags
+			| A bitmask indicating which attributes have to
+			| be adjusted.
+
+syscall fd_sync
+	| Synchronizes the data and metadata of a file to disk.
+	in
+		fd fd
+			| The file descriptor of the file whose data
+			| and metadata needs to be synchronized to disk.
+
+syscall fd_write
+	| Writes to a file descriptor.
+	in
+		fd            fd
+			| The file descriptor to which data should be
+			| written.
+		crange ciovec iovs
+			| List of scatter/gather vectors where data
+			| should be retrieved.
+	out
+		size nwritten
+			| The number of bytes written.
+
+syscall file_advise
+	| Provides file advisory information on a file descriptor.
+	in
+		fd       fd
+			| The file descriptor for which to provide file
+			| advisory information.
+		filesize offset
+			| The offset within the file to which the
+			| advisory applies.
+		filesize len
+			| The length of the region to which the advisory
+			| applies.
+		advice   advice
+			| The advice.
+
+syscall file_allocate
+	| Forces the allocation of space in a file.
+	in
+		fd       fd
+			| The file in which the space should be
+			| allocated.
+		filesize offset
+			| The offset at which the allocation should
+			| start.
+		filesize len
+			| The length of the area that is allocated.
+
+syscall file_create
+	| Creates a file of a specified type.
+	in
+		fd          fd
+			| The working directory at which the resolution
+			| of the file to be created starts.
+		crange char path
+			| The path at which the file should be created.
+		filetype    type
+			directory
+				| Creates a directory.
+
+syscall file_link
+	| Creates a hard link.
+	in
+		lookup      fd1
+			| The working directory at which the resolution
+			| of the source path starts.
+		crange char path1
+			| The source path of the file that should be
+			| hard linked.
+		fd          fd2
+			| The working directory at which the resolution
+			| of the destination path starts.
+		crange char path2
+			| The destination path at which the hard link
+			| should be created.
+
+syscall file_open
+	| Opens a file.
+	in
+		lookup      dirfd
+			| The working directory at which the resolution
+			| of the file to be opened starts.
+		crange char path
+			| The path of the file that should be opened.
+		oflags      oflags
+			| The method at which the file should be opened.
+		cptr fdstat fds
+			| [fdstat.fs_rights_base] and
+			| [fdstat.fs_rights_inheriting] specify the
+			| initial rights of the newly created file
+			| descriptor. The operating system is allowed to
+			| return a file descriptor with fewer rights
+			| than specified, if and only if those rights do
+			| not apply to the type of file being opened.
+			|
+			| [fdstat.fs_flags] specifies the initial flags
+			| of the file descriptor.
+			|
+			| [fdstat.fs_filetype] is ignored.
+	out
+		fd fd
+			| The file descriptor of the file that has been
+			| opened.
+
+syscall file_readdir
+	| Reads directory entries from a directory.
+	|
+	| When successful, the contents of the output buffer consist of
+	| a sequence of directory entries. Each directory entry consists
+	| of a [dirent] object, followed by [dirent.d_namlen] bytes
+	| holding the name of the directory entry.
+	|
+	| This system call fills the output buffer as much as possible,
+	| potentially truncating the last directory entry. This allows
+	| the caller to grow its read buffer size in case it's too small
+	| to fit a single large directory entry, or skip the oversized
+	| directory entry.
+	in
+		fd         fd
+			| The directory from which to read the directory
+			| entries.
+		range void buf
+			| The buffer where directory entries are stored.
+		dircookie  cookie
+			| The location within the directory to start
+			| reading.
+	out
+		size bufused
+			| The number of bytes stored in the read buffer.
+			| If less than the size of the read buffer, the
+			| end of the directory has been reached.
+
+syscall file_readlink
+	| Reads the contents of a symbolic link.
+	in
+		fd          fd
+			| The working directory at which the resolution
+			| of the path of the symbolic starts.
+		crange char path
+			| The path of the symbolic link whose contents
+			| should be read.
+		range char  buf
+			| The buffer where the contents of the symbolic
+			| link should be stored.
+	out
+		size bufused
+			| The number of bytes placed in the buffer.
+
+syscall file_rename
+	| Renames a file.
+	in
+		fd          fd1
+			| The working directory at which the resolution
+			| of the source path starts.
+		crange char path1
+			| The source path of the file that should be
+			| renamed.
+		fd          fd2
+			| The working directory at which the resolution
+			| of the destination path starts.
+		crange char path2
+			| The destination path to which the file should
+			| be renamed.
+
+syscall file_stat_fget
+	| Gets attributes of a file by file descriptor.
+	in
+		fd           fd
+			| The file descriptor whose attributes have to
+			| be obtained.
+		ptr filestat buf
+			| The buffer where the file's attributes are
+			| stored.
+
+syscall file_stat_fput
+	| Adjusts attributes of a file by file descriptor.
+	in
+		fd            fd
+			| The file descriptor whose attributes have to
+			| be adjusted.
+		cptr filestat buf
+			| The desired values of the file attributes that
+			| are adjusted.
+		fsflags       flags
+			| A bitmask indicating which attributes have to
+			| be adjusted.
+
+syscall file_stat_get
+	| Gets attributes of a file by path.
+	in
+		lookup       fd
+			| The working directory at which the resolution
+			| of the path whose attributes have to be
+			| obtained starts.
+		crange char  path
+			| The path of the file whose attributes have to
+			| be obtained.
+		ptr filestat buf
+			| The buffer where the file's attributes are
+			| stored.
+
+syscall file_stat_put
+	| Adjusts attributes of a file by path.
+	in
+		lookup        fd
+			| The working directory at which the resolution
+			| of the path whose attributes have to be
+			| adjusted starts.
+		crange char   path
+			| The path of the file whose attributes have to
+			| be adjusted.
+		cptr filestat buf
+			| The desired values of the file attributes that
+			| are adjusted.
+		fsflags       flags
+			| A bitmask indicating which attributes have to
+			| be adjusted.
+
+syscall file_symlink
+	| Creates a symbolic link.
+	in
+		crange char path1
+			| The contents of the symbolic link.
+		fd          fd
+			| The working directory at which the resolution
+			| of the destination path starts.
+		crange char path2
+			| The destination path at which the symbolic
+			| link should be created.
+
+syscall file_unlink
+	| Unlinks a file, or removes a directory.
+	in
+		fd          fd
+			| The working directory at which the resolution
+			| of the path starts.
+		crange char path
+			| The path that needs to be unlinked or removed.
+		ulflags     flags
+			removedir
+				| If set, attempt to remove a directory.
+				| Otherwise, unlink a file.
+
+syscall lock_unlock
+	| Unlocks a write-locked userspace lock.
+	|
+	| If a userspace lock is unlocked while having its
+	| [lock.kernel_managed] flag set, the lock cannot be unlocked in
+	| userspace directly. This system call needs to be performed
+	| instead, so that any waiting threads can be woken up.
+	|
+	| To prevent spurious invocations of this system call, the lock
+	| must be locked for writing. This prevents other threads from
+	| acquiring additional read locks while the system call is in
+	| progress. If the lock is acquired for reading, it must first
+	| be upgraded to a write lock.
+	in
+		ptr atomic lock lock
+			| The userspace lock that is locked for writing
+			| by the calling thread.
+		scope           scope
+			| Whether the lock is stored in private or
+			| shared memory.
+
+syscall mem_advise
+	| Provides memory advisory information on a region of memory.
+	in
+		range void mapping
+			| The pages for which to provide memory advisory
+			| information.
+		advice     advice
+			| The advice.
+
+syscall mem_map
+	| Creates a memory mapping, making the contents of a file
+	| accessible through memory.
+	in
+		ptr void addr
+			| If [mflags.fixed] is set, specifies to which
+			| address the file region is mapped. Otherwise,
+			| the mapping is performed at an unused
+			| location.
+		size len
+			| The length of the memory mapping to be
+			| created.
+		mprot      prot
+			| Initial memory protection options for the
+			| memory mapping.
+		mflags     flags
+			| Memory mapping flags.
+		fd         fd
+			| If [mflags.anon] is set, this argument must be
+			| [fd.map_anon_fd]. Otherwise, this argument
+			| specifies the file whose contents need to be
+			| mapped.
+		filesize   off
+			| If [mflags.anon] is set, this argument must be
+			| zero. Otherwise, this argument specifies the
+			| offset within the file at which the mapping
+			| starts.
+	out
+		ptr void   mem
+			| The starting address of the memory mapping.
+
+syscall mem_protect
+	| Change the protection of a memory mapping.
+	in
+		range void mapping
+			| The pages that need their protection changed.
+		mprot      prot
+			| New protection options.
+
+syscall mem_sync
+	| Synchronize a region of memory with its physical storage.
+	in
+		range void mapping
+			| The pages that need to be synchronized.
+		msflags    flags
+			| The method of synchronization.
+
+syscall mem_unmap
+	| Unmaps a region of memory.
+	in
+		range void mapping
+			| The pages that needs to be unmapped.
+
+syscall poll
+	| Concurrently polls for the occurrence of a set of events.
+	in
+		cptr subscription in
+			| The events to which to subscribe.
+		ptr event         out
+			| The events that have occurred.
+		size              nsubscriptions
+			| Both the number of subscriptions and events.
+	out
+		size nevents
+			| The number of events stored.
+
+syscall proc_exec
+	| Replaces the process by a new executable.
+	|
+	| Process execution in CloudABI differs from POSIX in two ways:
+	| handling of arguments and inheritance of file descriptors.
+	|
+	| CloudABI does not use string command line arguments. Instead,
+	| a buffer with binary data is copied into the address space of
+	| the new executable. The kernel does not enforce any specific
+	| structure to this data, although CloudABI's C library uses it
+	| to store a tree structure that is semantically identical to
+	| YAML.
+	|
+	| Due to the strong focus on thread safety, file descriptors
+	| aren't inherited through close-on-exec flags. An explicit
+	| list of file descriptors that need to be retained needs to be
+	| provided. After execution, file descriptors are placed in the
+	| order in which they are stored in the array. This not only
+	| makes the execution process deterministic. It also prevents
+	| potential information disclosures about the layout of the
+	| original process.
+	in
+		fd          fd
+			| A file descriptor of the new executable.
+		crange void data
+			| Binary argument data that is passed on to the
+			| new executable.
+		crange fd   fds
+			| The layout of the file descriptor table after
+			| execution.
+
+syscall proc_exit
+	| Terminates the process normally.
+	in
+		exitcode rval
+			| The exit code returned by the process. The
+			| exit code can be obtained by other processes
+			| through [event.proc_terminate.exitcode].
+	noreturn
+
+syscall proc_fork
+	| Forks the process of the calling thread.
+	|
+	| After forking, a new process shall be created, having only a
+	| copy of the calling thread. The parent process will obtain a
+	| process descriptor. When closed, the child process is
+	| automatically signaled with [signal.kill].
+	out
+		fd  fd
+			| In the parent process: the file descriptor
+			| number of the process descriptor.
+			|
+			| In the child process: [fd.process_child].
+		tid tid
+			| In the parent process: undefined.
+			|
+			| In the child process: the thread ID of the
+			| initial thread of the child process.
+
+syscall proc_raise
+	| Sends a signal to the process of the calling thread.
+	in
+		signal sig
+			| The signal condition that should be triggered.
+			| If the signal causes the process to terminate,
+			| its condition can be obtained by other
+			| processes through
+			| [event.proc_terminate.signal].
+
+syscall random_get
+	| Obtains random data from the kernel random number generator.
+	|
+	| As this interface is not guaranteed to be fast, it is advised
+	| that the random data obtained through this system call is used
+	| as the seed for a userspace pseudo-random number generator.
+	in
+		range void buf
+			| The buffer that needs to be filled with random
+			| data.
+
+syscall sock_recv
+	| Receives a message on a socket.
+	in
+		fd           sock
+			| The socket on which a message should be
+			| received.
+		cptr recv_in in
+			| Input parameters.
+		ptr recv_out out
+			| Output parameters.
+
+syscall sock_send
+	| Sends a message on a socket.
+	in
+		fd           sock
+			| The socket on which a message should be sent.
+		cptr send_in in
+			| Input parameters.
+		ptr send_out out
+			| Output parameters.
+
+syscall sock_shutdown
+	| Shuts down socket send and receive channels.
+	in
+		fd      sock
+			| The socket that needs its channels shut down.
+		sdflags how
+			| Which channels on the socket need to be shut
+			| down.
+
+syscall thread_create
+	| Creates a new thread within the current process.
+	in
+		ptr threadattr attr
+			| The desired attributes of the new thread.
+	out
+		tid tid
+			| The thread ID of the new thread.
+
+syscall thread_exit
+	| Terminates the calling thread.
+	|
+	| This system call can also unlock a single userspace lock
+	| after termination, which can be used to implement thread
+	| joining.
+	in
+		ptr atomic lock lock
+			| Userspace lock that is locked for writing by
+			| the calling thread.
+		scope           scope
+			| Whether the lock is stored in private or
+			| shared memory.
+	noreturn
+
+syscall thread_yield
+	| Temporarily yields execution of the calling thread.

@@ -1,0 +1,28 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "execinfo",
+    srcs = [
+        "backtrace.c",
+        "backtrace_symbols.c",
+        "backtrace_symbols_fd.c",
+        "execinfo_impl.h",
+    ],
+    visibility = ["//src/libc:__pkg__"],
+)
+
+cc_test_cloudabi(
+    name = "backtrace_test",
+    srcs = ["backtrace_test.cc"],
+    deps = ["@com_google_googletest//:gtest_main"],
+)
+
+[cc_test_cloudabi(
+    name = test + "_test",
+    srcs = [test + "_test.cc"],
+    linkopts = ["-Wl,--export-dynamic"],
+    deps = ["@com_google_googletest//:gtest_main"],
+) for test in [
+    "backtrace_symbols",
+    "backtrace_symbols_fd",
+]]

@@ -1,0 +1,17 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "langinfo",
+    srcs = [
+        "nl_langinfo.c",
+        "nl_langinfo_l.c",
+    ],
+    visibility = ["//src/libc:__pkg__"],
+    deps = ["//src/common"],
+)
+
+cc_test_cloudabi(
+    name = "nl_langinfo_test",
+    srcs = ["nl_langinfo_test.cc"],
+    deps = ["@com_google_googletest//:gtest_main"],
+)

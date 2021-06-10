@@ -1,0 +1,14 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "link",
+    srcs = ["dl_iterate_phdr.c"],
+    visibility = ["//src/libc:__pkg__"],
+    deps = ["//src/common"],
+)
+
+cc_test_cloudabi(
+    name = "dl_iterate_phdr_test",
+    srcs = ["dl_iterate_phdr_test.cc"],
+    deps = ["@com_google_googletest//:gtest_main"],
+)

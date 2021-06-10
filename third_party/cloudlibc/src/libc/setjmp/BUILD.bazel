@@ -1,0 +1,16 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "setjmp",
+    srcs = ["longjmp.c"],
+    visibility = ["//src/libc:__pkg__"],
+)
+
+[cc_test_cloudabi(
+    name = test + "_test",
+    srcs = [test + "_test.cc"],
+    deps = ["@com_google_googletest//:gtest_main"],
+) for test in [
+    "setjmp_longjmp",
+    "sigsetjmp_siglongjmp",
+]]

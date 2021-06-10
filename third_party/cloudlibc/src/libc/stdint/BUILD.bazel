@@ -1,0 +1,7 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_test_cloudabi(
+    name = "stdint_test",
+    srcs = ["stdint_test.c"],
+    deps = ["@com_google_googletest//:gtest_main"],
+)

@@ -1,0 +1,14 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "poll",
+    srcs = ["poll.c"],
+    visibility = ["//src/libc:__pkg__"],
+    deps = ["@org_cloudabi_cloudabi//headers:cloudabi_syscalls"],
+)
+
+cc_test_cloudabi(
+    name = "poll_test",
+    srcs = ["poll_test.cc"],
+    deps = ["//src/gtest_with_tmpdir"],
+)

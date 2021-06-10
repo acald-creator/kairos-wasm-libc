@@ -1,0 +1,17 @@
+load("@org_cloudabi_bazel_toolchains_cloudabi//:cc.bzl", "cc_test_cloudabi")
+
+cc_library(
+    name = "math",
+    srcs = [
+        "lgamma.c",
+        "lgammaf.c",
+        "lgammal.c",
+    ],
+    visibility = ["//src/libc:__pkg__"],
+)
+
+cc_test_cloudabi(
+    name = "math_test",
+    srcs = ["math_test.cc"],
+    deps = ["@com_google_googletest//:gtest_main"],
+)

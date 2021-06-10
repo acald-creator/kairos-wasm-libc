@@ -1,0 +1,2 @@
+build --cpu=x86_64-unknown-cloudabi
+build --crosstool_top=@org_cloudabi_bazel_toolchains_cloudabi//:toolchain

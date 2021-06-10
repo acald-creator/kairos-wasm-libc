@@ -1,0 +1,6 @@
+*.core
+*.orig
+*.rej
+.*.swp
+/_obj/
+/bazel-*
