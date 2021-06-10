@@ -4,6 +4,11 @@ KAIROS_TARGET_FLAGS = --target=wasm32
 SYSROOT = sysroot
 THREAD_MODEL = single
 
+AR = llvm-ar
+STRIP = llvm-strip
+RANLIB = llvm-ranlib
+NM = llvm-nm
+
 DIR = src/kairos
 INC = $(DIR)/include
 LIBC_DIR = $(DIR)/libc
