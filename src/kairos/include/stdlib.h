@@ -13,8 +13,8 @@ __BEGIN_C_CODE
 
 void *malloc(ksize_t);
 void free(void *);
-void *calloc(ksize_t *, ksize_t *);
-void *realloc(void *, ksize_t *);
+void *calloc(ksize_t mnemb, ksize_t size);
+void *realloc(void *ptr, ksize_t size);
 
 __END_C_CODE
 

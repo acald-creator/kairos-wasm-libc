@@ -2,11 +2,23 @@ KAIROS_CC = clang
 KAIROS_CFLAGS = -O2
 KAIROS_TARGET_FLAGS = --target=wasm32
 SYSROOT = sysroot
+THREAD_MODEL = single
 
-DIR = src
-INC = src/include
+DIR = src/kairos
+INC = $(DIR)/include
 LIBC_DIR = $(DIR)/libc
 LIBC_SOURCES = $(LIBC_DIR)/string.c
+DLMALLOC_DIR = src/dlmalloc
+DLMALLOC_SRC_DIR = $(DLMALLOC_DIR)/src
+DLMALLOC_SOURCES = $(DLMALLOC_SRC_DIR)/wrapper.c
+DLMALLOC_INC = $(DLMALLOC_DIR)/include
+
+ifeq ($(THREADS), single)
+KAIROS_CFLAGS += -mthread-model single -DKAIROS_THREAD_MODEL_SINGLE
+endif
+ifeq ($(THREADS), posix)
+KAIROS_CFLAGS += -mthread-model posix -DKAIROS_THREAD_MODEL_POSIX
+endif
 
 .PHONY: $(SYSROOT)
 
@@ -26,4 +38,10 @@ $(SYSROOT):
 	"$(KAIROS_CC)" $(KAIROS_CFLAGS) $(KAIROS_TARGET_FLAGS) --sysroot="$(SYSROOT)" -c $(LIBC_SOURCES) -I $(INC)
 	mkdir -p "$(SYSROOT)/lib"
 	llvm-ar crs "$(SYSROOT)/lib/libc.a" *.o
+	$(RM) *.o
+
+	$(RM) *.o
+	"$(KAIROS_CC)" $(KAIROS_CFLAGS) $(KAIROS_TARGET_FLAGS) --sysroot="$(SYSROOT)" -c $(DLMALLOC_SOURCES) -I $(INC) -I $(DLMALLOC_INC)
+	mkdir -p "$(SYSROOT)/lib"
+	$(AR) crs "$(SYSROOT)/lib/libc-dlmalloc.a" *.o
 	$(RM) *.o
