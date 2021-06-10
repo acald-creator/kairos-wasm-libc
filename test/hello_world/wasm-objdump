@@ -1,0 +1,25 @@
+
+hello.o:	file format wasm 0x1
+
+Section Details:
+
+Type[1]:
+ - type[0] (i32, i32) -> i32
+Import[2]:
+ - memory[0] pages: initial=0 <- env.__linear_memory
+ - global[0] i32 mutable=1 <- env.__stack_pointer
+Function[1]:
+ - func[0] sig=0 <add>
+Code[1]:
+ - func[0] size=44 <add>
+Custom:
+ - name: "linking"
+  - symbol table [count=2]
+   - 0: F <add> func=0 binding=global vis=hidden
+   - 1: G <env.__stack_pointer> global=0 undefined binding=global vis=default
+Custom:
+ - name: "reloc.CODE"
+  - relocations for section: 3 (Code) [1]
+   - R_WASM_GLOBAL_INDEX_LEB offset=0x000006(file=0x00005e) symbol=1 <env.__stack_pointer>
+Custom:
+ - name: "producers"
