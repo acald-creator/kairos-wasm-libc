@@ -12,4 +12,4 @@ This will create a `sysroot` folder depending on where you run the command from,
 
 To have the `sysroot` created in a different location:
 
-`/path/to/wasm/supporting/c/compiler --sysroot=/path/to/new/sysroot ...`
+`make KAIROS_CC=/path/to/wasm/supporting/c/compiler --sysroot=/path/to/new/sysroot ...`
