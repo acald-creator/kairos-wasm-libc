@@ -1,21 +1,6 @@
-#ifndef __kairos_libc_stdlib_h
-#define __kairos_libc_stdlib_h
+#ifndef __kairos_stdlib_h
+#define __kairos_stdlib_h
 
-#define __need_size_t
-#define __need_NULL
+#include <__functions_malloc.h>
 
-#include "sys/types.h"
-#include "sys/cdefs.h"
-
-#include <stddef.h>
-
-__BEGIN_C_CODE
-
-void *malloc(ksize_t);
-void free(void *);
-void *calloc(ksize_t mnemb, ksize_t size);
-void *realloc(void *ptr, ksize_t size);
-
-__END_C_CODE
-
-#endif // __kairos_libc_stdlib_h
+#endif // __kairos_stdlib_h
