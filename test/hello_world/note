@@ -1,4 +1,4 @@
-clang --target=wasm32 -isysroot ../../sysroot \
+clang --target=wasm32-unknown-unknown -isysroot ../../sysroot \
     -c -S \
     -emit-llvm \
     hello.c
@@ -8,12 +8,12 @@ llc -march=wasm32 -filetype=obj hello.ll
 wasm-ld --no-entry --export-all -o hello.wasm hello.o
 
 // obtain assembly
-clang --target=wasm32 -isysroot ../../sysroot \
+clang --target=wasm32-unknown-unknown -isysroot ../../sysroot \
     -c -S -O2 \
     hello.c
 
 // normal way of using clang
-clang --target=wasm32 -isysroot ../sysroot \
+clang --target=wasm32-unknown-unknown -isysroot ../sysroot \
     -O2 -s -o \
     hello.wasm hello.c
 
@@ -21,6 +21,8 @@ wasm-ld: error: cannot open crt1.o: No such file or directory
 wasm-ld: error: unable to find library -lc
 wasm-ld: error: cannot open /mnt/ismenaos/usr/lib/clang/13.0.0/lib/libclang_rt.builtins-wasm32.a: No such file or directory
 clang-13: error: linker command failed with exit code 1 (use -v to see invocation)
+
+wasm-objdump -x hello.o > wasm-objdump
 
 curl https://get.wasmer.io -sSfL | sh
 

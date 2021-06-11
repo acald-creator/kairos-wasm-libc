@@ -1,7 +1,7 @@
 ; ModuleID = 'hello.c'
 source_filename = "hello.c"
 target datalayout = "e-m:e-p:32:32-i64:64-n32:64-S128-ni:1"
-target triple = "wasm32"
+target triple = "wasm32-unknown-unknown"
 
 ; Function Attrs: noinline nounwind optnone
 define hidden i32 @add(i32 %0, i32 %1) #0 {
