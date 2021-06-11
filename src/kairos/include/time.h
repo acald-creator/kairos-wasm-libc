@@ -1,5 +1,5 @@
-#ifndef __kairos_libc_time_h
-#define __kairos_libc_time_h
+#ifndef __kairos_time_h
+#define __kairos_time_h
 
 #define __need_size_t
 #define __need_NULL
@@ -8,4 +8,4 @@
 #include <__typedef_time_t.h>
 #include <__struct_timespec.h>
 
-#endif // __kairos_libc_time_h
+#endif // __kairos_time_h
