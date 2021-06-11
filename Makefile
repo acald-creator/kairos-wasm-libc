@@ -1,13 +1,15 @@
 KAIROS_CC = clang
+KAIROS_NM = $(pathsubst %clang,%llvm-nm,$(KAIROS_CC))
+KAIROS_AR = $(pathsubst %clang,%llvm-ar,$(KAIROS_CC))
 KAIROS_CFLAGS = -O2
-KAIROS_TARGET_FLAGS = --target=wasm32
+KAIROS_TARGET_FLAGS = --target=wasm32-unknown-unknown
 SYSROOT = sysroot
 THREAD_MODEL = single
 
-AR = llvm-ar
-STRIP = llvm-strip
-RANLIB = llvm-ranlib
-NM = llvm-nm
+# AR = llvm-ar
+# STRIP = llvm-strip
+# RANLIB = llvm-ranlib
+# NM = llvm-nm
 
 DIR = src/kairos
 INC = $(DIR)/include
