@@ -12,4 +12,8 @@ This will create a `sysroot` folder depending on where you run the command from,
 
 To have the `sysroot` created in a different location:
 
-`make KAIROS_CC=/path/to/wasm/supporting/c/compiler --sysroot=/path/to/new/sysroot ...`
+```bash
+make KAIROS_CC=clang \
+KAIROS_AR=llvm-ar \
+KAIROS_NM=llvm-nm --sysroot=/path/to/new/sysroot ...
+```
